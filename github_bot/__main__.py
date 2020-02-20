@@ -1,10 +1,16 @@
+"""PyCon workshops GitHub bot exercise."""
+
 from datetime import datetime
+import logging
 import re
 
 from octomachinery.app.server.runner import run as run_app
 from octomachinery.routing import process_event_actions
 from octomachinery.routing.decorators import process_webhook_payload
 from octomachinery.runtime.context import RUNTIME_CONTEXT
+
+
+logger = logging.getLogger(__name__)
 
 
 @process_event_actions('issues', {'opened'})
@@ -19,7 +25,46 @@ async def on_issue_opened(*, issue, **_kw):
         f'Thanks for the report @{author}! '
         "I will look into it ASAP! (I'm a bot 🤖)."
     )
-    await github_api.post(comments_api_url, data={"body": message})
+    await github_api.post(comments_api_url, data={'body': message})
+
+
+@process_event_actions('pull_request', {'closed'})
+@process_webhook_payload
+async def on_pr_merged(*, number, pull_request, **_kw):
+    """Whenever a PR is merged, say thanks to the author."""
+    github_api = RUNTIME_CONTEXT.app_installation_client
+
+    if not pull_request['merged']:
+        # interrupt early
+        logger.info('PR #%d just got closed but not merged', number)
+        return
+
+    logger.info('PR #%d just got merged', number)
+
+    comments_api_url = pull_request['comments_url']
+    author = pull_request['user']['login']
+    message = (
+        f'Thanks for the PR @{author}! '
+    )
+    await github_api.post(
+        comments_api_url, data={
+            'body': message,
+        },
+    )
+
+
+@process_event_actions('issue_comment', {'created'})
+@process_webhook_payload
+async def on_comment_created(*, comment, **_kw):
+    """Whenever an comment is posted, like it."""
+    github_api = RUNTIME_CONTEXT.app_installation_client
+    comment_reactions_api_url = f'{comment["url"]}/reactions'
+
+    await github_api.post(
+        comment_reactions_api_url,
+        preview_api_version='squirrel-girl',
+        data={'content': '+1'},
+    )
 
 
 @process_event_actions('pull_request', {'opened', 'edited'})
@@ -29,8 +74,6 @@ async def on_pr_check_wip(*, pull_request, repository, **_kw):
 
     Send a status update to GitHub via Checks API.
     """
-    github_api = RUNTIME_CONTEXT.app_installation_client
-
     check_run_name = 'Work-in-progress state'
 
     pr_head_sha = pull_request['head']['sha']
@@ -38,6 +81,7 @@ async def on_pr_check_wip(*, pull_request, repository, **_kw):
 
     check_runs_base_uri = f'{repo_api_url}/check-runs'
 
+    github_api = RUNTIME_CONTEXT.app_installation_client
     resp = await github_api.post(
         check_runs_base_uri,
         preview_api_version='antiope',
